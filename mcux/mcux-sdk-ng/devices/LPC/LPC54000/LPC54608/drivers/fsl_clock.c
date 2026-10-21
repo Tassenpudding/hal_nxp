@@ -27,6 +27,13 @@
 #define PLL_MAX_N_DIV 0x100U
 #define USB_PLL_MAX_N_DIV 0x100U
 
+/* The PLL lock detector is only dependable for 100 kHz <= Fref <= 20 MHz;
+ * otherwise wait this long instead.
+ */
+#define PLL_LOCK_FREF_MIN_HZ (100000U)
+#define PLL_LOCK_FREF_MAX_HZ (20000000U)
+#define PLL_SETTLE_TIME_US   (6000U)
+
 #define PLL_MDEC_VAL_P (0U)                          /*!<  MDEC is in bits  16 downto 0 */
 #define PLL_MDEC_VAL_M (0x1FFFFUL << PLL_MDEC_VAL_P) /*!<  NDEC is in bits  9 downto 0 */
 #define PLL_NDEC_VAL_P (0U)                          /*!<  NDEC is in bits  9:0 */
@@ -117,6 +124,8 @@ static uint32_t pllDecodeM(uint32_t MDEC);
 static void pllFindSel(uint32_t M, uint32_t *pSelP, uint32_t *pSelI, uint32_t *pSelR);
 /* Get predivider (N) from PLL NDEC setting */
 static uint32_t findPllPreDiv(uint32_t ctrlReg, uint32_t nDecReg);
+/* Check whether the PLL lock detector can be used for this setup */
+static bool pllLockDetectUsable(uint32_t finHz, uint32_t ctrlReg, uint32_t nDecReg);
 /* Get postdivider (P) from PLL PDEC setting */
 static uint32_t findPllPostDiv(uint32_t ctrlReg, uint32_t pDecReg);
 /* Get multiplier (M) from PLL MDEC and BYPASS_FBDIV2 settings */
@@ -1365,6 +1374,14 @@ static uint32_t findPllPreDiv(uint32_t ctrlReg, uint32_t nDecReg)
     return preDiv;
 }
 
+/* Check whether the PLL lock detector can be used for this setup */
+static bool pllLockDetectUsable(uint32_t finHz, uint32_t ctrlReg, uint32_t nDecReg)
+{
+    uint32_t frefHz = finHz / findPllPreDiv(ctrlReg, nDecReg);
+
+    return (frefHz >= PLL_LOCK_FREF_MIN_HZ) && (frefHz <= PLL_LOCK_FREF_MAX_HZ);
+}
+
 /* Get postdivider (P) from PLL PDEC setting */
 static uint32_t findPllPostDiv(uint32_t ctrlReg, uint32_t pDecReg)
 {
@@ -2172,8 +2189,15 @@ pll_error_t CLOCK_SetupAudioPLLPrec(pll_setup_t *pSetup, uint32_t flagcfg)
     }
     if ((pSetup->flags & PLL_SETUPFLAG_WAITLOCK) != 0U)
     {
-        while (CLOCK_IsAudioPLLLocked() == false)
+        if (pllLockDetectUsable(CLOCK_GetAudioPLLInClockRate(), pSetup->pllctrl, pSetup->pllndec))
         {
+            while (CLOCK_IsAudioPLLLocked() == false)
+            {
+            }
+        }
+        else
+        {
+            SDK_DelayAtLeastUs(PLL_SETTLE_TIME_US, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
         }
     }
 
